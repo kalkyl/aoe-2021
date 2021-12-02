@@ -131,13 +131,9 @@ mod app {
                     };
                     *ctx.local.x = x;
                     *ctx.local.y = y;
-                    ctx.shared.display.lock(|d| {
-                        d.set_pixel(
-                            ((x as f32 / 2100.0) * 128.0) as _,
-                            ((y as f32 / 1000.0) * 64.0) as _,
-                            true,
-                        )
-                    });
+                    let dx = ((x as f32 / 2_100.0) * 128.0) as u32;
+                    let dy = ((y as f32 / 1_000.0) * 64.0) as u32;
+                    ctx.shared.display.lock(|d| d.set_pixel(dx, dy, true));
                     remaining
                 }
                 _ => break,

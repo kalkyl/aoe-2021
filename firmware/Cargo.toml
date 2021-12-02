@@ -5,7 +5,6 @@ edition = "2021"
 version = "0.1.0"
 
 [workspace]
-members = ["testsuite"]
 
 [dependencies]
 cortex-m = "0.7.1"

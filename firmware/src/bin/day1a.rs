@@ -84,9 +84,6 @@ mod app {
         let mut window = &buf[..];
         while !window.is_empty() {
             window = match ctx.local.cobs_buf.feed::<Depth>(window) {
-                FeedResult::Consumed => break,
-                FeedResult::OverFull(w) => w,
-                FeedResult::DeserError(w) => w,
                 FeedResult::Success { data, remaining } => {
                     if let Some(true) = ctx.local.history.recent().map(|p| data.0 > p.0) {
                         *ctx.local.cnt += 1;
@@ -94,6 +91,7 @@ mod app {
                     ctx.local.history.write(data);
                     remaining
                 }
+                _ => break,
             };
         }
         defmt::info!("Count: {}", *ctx.local.cnt);

@@ -123,9 +123,6 @@ mod app {
         let mut window = &buf[..];
         while !window.is_empty() {
             window = match ctx.local.cobs_buf.feed::<Direction>(window) {
-                FeedResult::Consumed => break,
-                FeedResult::OverFull(w) => w,
-                FeedResult::DeserError(w) => w,
                 FeedResult::Success { data, remaining } => {
                     let (x, y) = match data {
                         Direction::Up(d) => (*ctx.local.x, *ctx.local.y - d as i32),
@@ -143,6 +140,7 @@ mod app {
                     });
                     remaining
                 }
+                _ => break,
             };
         }
         defmt::info!("Result: {}", *ctx.local.x * *ctx.local.y);

@@ -85,9 +85,6 @@ mod app {
         let history = ctx.local.history;
         while !window.is_empty() {
             window = match ctx.local.cobs_buf.feed::<Depth>(window) {
-                FeedResult::Consumed => break,
-                FeedResult::OverFull(w) => w,
-                FeedResult::DeserError(w) => w,
                 FeedResult::Success { data, remaining } => {
                     let prev = history.iter().map(|x| x.0 as u32).sum::<u32>();
                     if history.len() == 3 {
@@ -101,6 +98,7 @@ mod app {
                     }
                     remaining
                 }
+                _ => break,
             };
         }
         defmt::info!("Count: {}", *ctx.local.cnt);

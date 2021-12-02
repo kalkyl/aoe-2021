@@ -4,18 +4,25 @@
 
 use firmware as _; // global logger + panicking-behavior + memory layout
 
-#[rtic::app(device = stm32f4xx_hal::pac, dispatchers = [USART1])]
+#[rtic::app(device = stm32f4xx_hal::pac, dispatchers = [EXTI0, USART1])]
 mod app {
     use defmt::Format;
     use heapless::Vec;
     use postcard::{CobsAccumulator, FeedResult};
     use serde::{Deserialize, Serialize};
+    use ssd1306::{mode::BufferedGraphicsMode, prelude::*, I2CDisplayInterface, Ssd1306};
     use stm32f4xx_hal::{
+        gpio::{Alternate, OpenDrain},
+        i2c::I2c,
         otg_fs::{UsbBus, UsbBusType, USB},
+        pac::I2C1,
         prelude::*,
+        timer::{monotonic::fugit::ExtU32, monotonic::MonoTimer, Timer},
     };
     use usb_device::{bus::UsbBusAllocator, prelude::*};
     use usbd_serial::SerialPort;
+    type SCL = stm32f4xx_hal::gpio::Pin<Alternate<OpenDrain, 4_u8>, 'B', 8_u8>;
+    type SDA = stm32f4xx_hal::gpio::Pin<Alternate<OpenDrain, 4_u8>, 'B', 9_u8>;
     const BUF_SIZE: usize = 64;
 
     #[derive(Format, Serialize, Deserialize, Clone, Copy)]
@@ -25,8 +32,17 @@ mod app {
         Forward(u8),
     }
 
+    #[monotonic(binds = TIM2, default = true)]
+    type MyMono = MonoTimer<stm32f4xx_hal::pac::TIM2, 1_000_000>;
+
     #[shared]
-    struct Shared {}
+    struct Shared {
+        display: Ssd1306<
+            I2CInterface<I2c<I2C1, (SCL, SDA)>>,
+            DisplaySize128x64,
+            BufferedGraphicsMode<DisplaySize128x64>,
+        >,
+    }
 
     #[local]
     struct Local {
@@ -59,8 +75,27 @@ mod app {
             .device_class(usbd_serial::USB_CLASS_CDC)
             .build();
 
+        // Set up I2C.
+        let gpiob = ctx.device.GPIOB.split();
+        let scl = gpiob.pb8.into_alternate_open_drain();
+        let sda = gpiob.pb9.into_alternate_open_drain();
+        let i2c = I2c::new(ctx.device.I2C1, (scl, sda), 400.khz(), &clocks);
+
+        // Configure the OLED display.
+        let interface = I2CDisplayInterface::new(i2c);
+        let mut display = Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate0)
+            .into_buffered_graphics_mode();
+        display.init().unwrap();
+
+        let mono = Timer::new(ctx.device.TIM2, &clocks).monotonic();
+        update_display::spawn().ok();
+
         defmt::info!("Send me some input data!");
-        (Shared {}, Local { serial, usb_dev }, init::Monotonics())
+        (
+            Shared { display },
+            Local { serial, usb_dev },
+            init::Monotonics(mono),
+        )
     }
 
     #[idle]
@@ -83,8 +118,8 @@ mod app {
         }
     }
 
-    #[task(local = [cobs_buf: CobsAccumulator<64> = CobsAccumulator::new(), x: i32 = 0, y: i32 = 0], priority = 2, capacity = 8)]
-    fn parser(ctx: parser::Context, buf: Vec<u8, BUF_SIZE>) {
+    #[task(local = [cobs_buf: CobsAccumulator<64> = CobsAccumulator::new(), x: i32 = 0, y: i32 = 0], shared = [display], priority = 2, capacity = 8)]
+    fn parser(mut ctx: parser::Context, buf: Vec<u8, BUF_SIZE>) {
         let mut window = &buf[..];
         while !window.is_empty() {
             window = match ctx.local.cobs_buf.feed::<Direction>(window) {
@@ -99,10 +134,23 @@ mod app {
                     };
                     *ctx.local.x = x;
                     *ctx.local.y = y;
+                    ctx.shared.display.lock(|d| {
+                        d.set_pixel(
+                            ((x as f32 / 2100.0) * 128.0) as _,
+                            ((y as f32 / 1000.0) * 64.0) as _,
+                            true,
+                        )
+                    });
                     remaining
                 }
             };
         }
         defmt::info!("Result: {}", *ctx.local.x * *ctx.local.y);
+    }
+
+    #[task(shared = [display], priority = 2)]
+    fn update_display(mut ctx: update_display::Context) {
+        ctx.shared.display.lock(|d| d.flush().ok());
+        update_display::spawn_after(15.millis()).ok();
     }
 }

@@ -45,10 +45,10 @@ fn main() -> Result<(), Error> {
         .iter()
         .flat_map(|x| postcard::to_slice_cobs(&x, &mut buf).unwrap().to_vec())
         .collect::<Vec<_>>()
-        .chunks(128)
+        .chunks(10)
     {
         port.write(entry).expect("Write failed!");
-        thread::sleep(Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(5));
     }
 
     println!("Transfer completed!");

@@ -28,10 +28,10 @@ fn main() -> Result<(), Error> {
         .map(|l| l.map(Direction::from_string))
         .collect::<Result<Vec<Direction>, _>>()?;
 
-    // let ports = serialport::available_ports().expect("No ports found!");
-    // for p in ports {
-    //     println!("{}", p.port_name);
-    // }
+    let ports = serialport::available_ports().expect("No ports found!");
+    for p in ports {
+        println!("{}", p.port_name);
+    }
 
     let mut port = serialport::new(PORT, 1_000_000)
         .timeout(Duration::from_millis(10))
@@ -45,10 +45,10 @@ fn main() -> Result<(), Error> {
         .iter()
         .flat_map(|x| postcard::to_slice_cobs(&x, &mut buf).unwrap().to_vec())
         .collect::<Vec<_>>()
-        .chunks(10)
+        .chunks(8)
     {
         port.write(entry).expect("Write failed!");
-        thread::sleep(Duration::from_millis(5));
+        thread::sleep(Duration::from_millis(2));
     }
 
     println!("Transfer completed!");

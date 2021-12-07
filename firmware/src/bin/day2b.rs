@@ -3,11 +3,17 @@
 #![no_std]
 
 use firmware as _; // global logger + panicking-behavior + memory layout
+use heapless::pool;
+const BUF_SIZE: usize = 64;
+pool!(P: [u8; BUF_SIZE]);
 
 #[rtic::app(device = stm32f4xx_hal::pac, dispatchers = [EXTI0, USART1])]
 mod app {
+    use super::{BUF_SIZE, P};
     use defmt::Format;
-    use heapless::Vec;
+
+    use heapless::pool::singleton::{Box, Pool};
+
     use postcard::{CobsAccumulator, FeedResult};
     use serde::{Deserialize, Serialize};
     use ssd1306::{mode::BufferedGraphicsMode, prelude::*, I2CDisplayInterface, Ssd1306};
@@ -23,7 +29,6 @@ mod app {
     use usbd_serial::SerialPort;
     type SCL = stm32f4xx_hal::gpio::Pin<Alternate<OpenDrain, 4_u8>, 'B', 8_u8>;
     type SDA = stm32f4xx_hal::gpio::Pin<Alternate<OpenDrain, 4_u8>, 'B', 9_u8>;
-    const BUF_SIZE: usize = 64;
 
     #[derive(Format, Serialize, Deserialize, Clone, Copy)]
     pub enum Direction {
@@ -50,8 +55,9 @@ mod app {
         serial: SerialPort<'static, UsbBus<USB>>,
     }
 
-    #[init(local = [ep_memory: [u32; 1024] = [0; 1024], usb_bus: Option<UsbBusAllocator<UsbBusType>> = None])]
+    #[init(local = [ep_memory: [u32; 1024] = [0; 1024], usb_bus: Option<UsbBusAllocator<UsbBusType>> = None, memory: [u8; 512] = [0; 512]])]
     fn init(ctx: init::Context) -> (Shared, Local, init::Monotonics) {
+        P::grow(ctx.local.memory);
         let rcc = ctx.device.RCC.constrain();
         let clocks = rcc.cfgr.sysclk(100.mhz()).require_pll48clk().freeze();
 
@@ -109,18 +115,18 @@ mod app {
         if !ctx.local.usb_dev.poll(&mut [serial]) {
             return;
         }
-        let mut buf = [0u8; BUF_SIZE];
-        match serial.read(&mut buf) {
+        let mut buf = P::alloc().unwrap().init([0u8; BUF_SIZE]);
+        match serial.read(buf.as_mut()) {
             Ok(count) if count > 0 => {
-                parser::spawn(Vec::from_slice(&buf[..count]).unwrap()).ok();
+                parser::spawn(buf, count).ok();
             }
             _ => {}
         }
     }
 
     #[task(local = [cobs_buf: CobsAccumulator<64> = CobsAccumulator::new(), aim: i32 = 0, x: i32 = 0, y: i32 = 0], shared = [display], priority = 2, capacity = 8)]
-    fn parser(mut ctx: parser::Context, buf: Vec<u8, BUF_SIZE>) {
-        let mut window = &buf[..];
+    fn parser(mut ctx: parser::Context, buf: Box<P>, count: usize) {
+        let mut window = &buf[..count];
         while !window.is_empty() {
             window = match ctx.local.cobs_buf.feed::<Direction>(window) {
                 FeedResult::Success { data, remaining } => {
@@ -152,6 +158,6 @@ mod app {
     #[task(shared = [display], priority = 2)]
     fn update_display(mut ctx: update_display::Context) {
         ctx.shared.display.lock(|d| d.flush().ok());
-        update_display::spawn_after(15.millis()).ok();
+        update_display::spawn_after(16.millis()).ok();
     }
 }
